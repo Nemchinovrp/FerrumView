@@ -1,0 +1,22 @@
+# Rust build artifacts
+/target/
+
+# IntelliJ IDEA / RustRover
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Local environment files
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary / backup files
+*.log
+*.tmp
+*.swp
+*~
