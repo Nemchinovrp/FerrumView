@@ -22,12 +22,31 @@
     #status { padding: 12px 0; margin: 0; color: #a6e5cb; }
     #status[data-error="true"] { color: #ffacac; }
     .hint { font-size: 14px; }
+    .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 24px; margin-top: 20px; }
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    #cameras { display: grid; gap: 8px; }
+    .camera { text-align: left; background: #192230; color: #e6edf7; border: 1px solid #40516c; overflow-wrap: anywhere; }
+    .camera[aria-pressed="true"] { background: #a6e5cb; color: #10261e; border-color: #a6e5cb; }
+    .camera:hover { background: #304338; }
+    .camera[aria-pressed="true"]:hover { background: #c4f4e1; }
+    #camera-title { margin-top: 0; }
+    video { margin-top: 0; }
+    @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } #cameras { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
   </style>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 </head>
 <body>
 <main>
   <header><h1>FerrumView</h1><p>Просмотр камеры</p></header>
+  <div class="layout">
+  <aside aria-label="Список камер">
+    <h2>Камеры <span id="camera-count"></span></h2>
+    <p id="list-status" class="hint" role="status">Загрузка списка…</p>
+    <div id="cameras"></div>
+  </aside>
+  <section aria-labelledby="camera-title">
+  <h2 id="camera-title">Просмотр камеры</h2>
   <video id="video" controls autoplay muted playsinline aria-label="Видеопоток камеры"></video>
   <p id="status" role="status" aria-live="polite">Укажите ссылку на камеру.</p>
   <form id="form">
@@ -37,11 +56,16 @@
     <button id="reconnect" type="button">Переподключить</button>
   </form>
   <p class="hint">Видео запускается без звука. Звук и полный экран доступны в плеере.</p>
+  </section>
+  </div>
 </main>
 <script>
   const video = document.getElementById('video');
   const input = document.getElementById('url');
   const status = document.getElementById('status');
+  const cameraList = document.getElementById('cameras');
+  const listStatus = document.getElementById('list-status');
+  let cameras = [];
   let hls;
   let revision = 0;
   let failed = false;
@@ -64,6 +88,11 @@
     } catch {
       message('Введите корректную HTTP или HTTPS ссылку на поток.', true);
       return;
+    }
+    const selected = cameras.find(camera => camera.url === input.value.trim());
+    document.getElementById('camera-title').textContent = selected ? selected.name : 'Другая камера';
+    for (const [index, button] of Array.from(cameraList.children).entries()) {
+      button.setAttribute('aria-pressed', String(cameras[index] === selected));
     }
     revision++;
     failed = false;
@@ -102,14 +131,27 @@
   document.getElementById('reconnect').addEventListener('click', connect);
   const initialRevision = revision;
   fetch('/api/config', { cache: 'no-store' })
-    .then(response => { if (!response.ok) throw new Error(); return response.json(); })
+    .then(async response => { if (!response.ok) throw new Error(await response.text()); return response.json(); })
     .then(config => {
-      if (config.stream_url && !input.value && revision === initialRevision) {
-        input.value = config.stream_url;
+      cameras = config.cameras;
+      document.getElementById('camera-count').textContent = `(${cameras.length})`;
+      listStatus.textContent = cameras.length ? '' : 'Добавьте камеры в streams.txt: Название | URL';
+      for (const camera of cameras) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'camera';
+        button.textContent = camera.name;
+        button.setAttribute('aria-pressed', 'false');
+        button.addEventListener('click', () => { input.value = camera.url; connect(); });
+        cameraList.append(button);
+      }
+      const initialUrl = config.stream_url || cameras[0]?.url;
+      if (initialUrl && !input.value && revision === initialRevision) {
+        input.value = initialUrl;
         connect();
       }
     })
-    .catch(() => { if (revision === initialRevision) message('Введите ссылку на поток вручную.'); });
+    .catch(error => { listStatus.textContent = `Не удалось загрузить список камер: ${error.message}. Исправьте файл и обновите страницу.`; });
 </script>
 </body>
 </html>
