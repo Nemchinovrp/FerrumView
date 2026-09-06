@@ -28,10 +28,10 @@ async fn main() -> Result<()> {
         )
         .route("/api/config", get(config))
         .with_state(Config { stream_url: first });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:6523")
         .await
-        .context("failed to bind http://127.0.0.1:3000")?;
-    tracing::info!("Open http://127.0.0.1:3000 in your browser");
+        .context("failed to bind http://127.0.0.1:6523")?;
+    tracing::info!("Open http://127.0.0.1:6523 in your browser");
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
