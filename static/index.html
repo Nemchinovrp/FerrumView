@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>FerrumView — просмотр камеры</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #10151e; color: #e6edf7; }
+    body { margin: 0; }
+    main { max-width: 1100px; margin: auto; padding: 32px 20px; }
+    header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+    h1 { font-size: 26px; margin: 0; letter-spacing: -.6px; }
+    header p, .hint { color: #9cabc1; }
+    video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #05080d; border-radius: 14px; margin: 20px 0; }
+    form { display: flex; flex-wrap: wrap; gap: 12px; }
+    label { width: 100%; font-weight: 600; }
+    input { flex: 1; min-width: 180px; background: #192230; color: inherit; border: 1px solid #40516c; border-radius: 8px; padding: 12px; font: inherit; }
+    button { border: 0; border-radius: 8px; padding: 12px 20px; background: #a6e5cb; color: #10261e; font: inherit; font-weight: 600; cursor: pointer; }
+    button:hover { background: #c4f4e1; }
+    :focus-visible { outline: 3px solid #a6e5cb; outline-offset: 3px; }
+    #status { padding: 12px 0; margin: 0; color: #a6e5cb; }
+    #status[data-error="true"] { color: #ffacac; }
+    .hint { font-size: 14px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+</head>
+<body>
+<main>
+  <header><h1>FerrumView</h1><p>Просмотр камеры</p></header>
+  <video id="video" controls autoplay muted playsinline aria-label="Видеопоток камеры"></video>
+  <p id="status" role="status" aria-live="polite">Укажите ссылку на камеру.</p>
+  <form id="form">
+    <label for="url">Ссылка на HLS-поток</label>
+    <input id="url" type="url" required placeholder="https://example.com/index.m3u8" autocomplete="off" spellcheck="false">
+    <button type="submit">Подключить</button>
+    <button id="reconnect" type="button">Переподключить</button>
+  </form>
+  <p class="hint">Видео запускается без звука. Звук и полный экран доступны в плеере.</p>
+</main>
+<script>
+  const video = document.getElementById('video');
+  const input = document.getElementById('url');
+  const status = document.getElementById('status');
+  let hls;
+  let revision = 0;
+  let failed = false;
+  function message(text, error = false) {
+    status.textContent = text;
+    status.dataset.error = String(error);
+  }
+  function play() {
+    const current = revision;
+    video.play().catch(() => {
+      if (current === revision && !failed) message('Нажмите ▶ в плеере, чтобы начать просмотр.');
+    });
+  }
+  function connect() {
+    let url;
+    try {
+      url = new URL(input.value.trim());
+      if (!['https:', 'http:'].includes(url.protocol)) throw new Error();
+      url.hash = '';
+    } catch {
+      message('Введите корректную HTTP или HTTPS ссылку на поток.', true);
+      return;
+    }
+    revision++;
+    failed = false;
+    if (hls) { hls.destroy(); hls = null; }
+    video.removeAttribute('src');
+    video.load();
+    message('Подключение к камере…');
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url.href;
+      play();
+    } else if (window.Hls && Hls.isSupported()) {
+      hls = new Hls();
+      hls.on(Hls.Events.MANIFEST_PARSED, play);
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (!data.fatal) return;
+        failed = true;
+        message('Не удалось воспроизвести поток. Проверьте ссылку, срок действия токена и доступность камеры, затем переподключитесь.', true);
+        hls.destroy();
+        hls = null;
+      });
+      hls.loadSource(url.href);
+      hls.attachMedia(video);
+    } else {
+      failed = true;
+      message('Плеер недоступен: проверьте доступ к интернету и используйте браузер с поддержкой HLS.', true);
+    }
+  }
+  video.addEventListener('playing', () => { failed = false; message('● Прямой эфир'); });
+  video.addEventListener('waiting', () => { if (!failed) message('Буферизация…'); });
+  video.addEventListener('pause', () => { if (!failed) message('Пауза'); });
+  video.addEventListener('error', () => {
+    failed = true;
+    message('Ошибка воспроизведения. Проверьте доступность потока и нажмите «Переподключить».', true);
+  });
+  document.getElementById('form').addEventListener('submit', event => { event.preventDefault(); connect(); });
+  document.getElementById('reconnect').addEventListener('click', connect);
+  const initialRevision = revision;
+  fetch('/api/config', { cache: 'no-store' })
+    .then(response => { if (!response.ok) throw new Error(); return response.json(); })
+    .then(config => {
+      if (config.stream_url && !input.value && revision === initialRevision) {
+        input.value = config.stream_url;
+        connect();
+      }
+    })
+    .catch(() => { if (revision === initialRevision) message('Введите ссылку на поток вручную.'); });
+</script>
+</body>
+</html>

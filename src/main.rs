@@ -1,61 +1,50 @@
+mod inspect;
+
 use anyhow::{Context, Result};
-use ffmpeg_next as ffmpeg;
+use axum::{Json, Router, extract::State, response::Html, routing::get};
+use serde::Serialize;
 
-fn main() -> Result<()> {
+#[derive(Clone, Serialize)]
+struct Config {
+    stream_url: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-
-    ffmpeg::init()
-        .context("ffmpeg init failed")?;
-
-    let url = std::env::args()
-        .nth(1)
-        .context("usage: ferrumview <hls-url>")?;
-
-    let mut input =
-        ffmpeg::format::input(&url)
-            .context("failed to open HLS stream")?;
-
-    let video = input
-        .streams()
-        .best(ffmpeg::media::Type::Video)
-        .context("no video stream")?;
-
-    let video_index = video.index();
-
-    let params = video.parameters();
-
-    println!(
-        "video stream index={} codec={:?}",
-        video_index,
-        params.id()
-    );
-
-    let mut packet_count = 0u64;
-    let mut byte_count = 0u64;
-
-    for (stream, packet) in input.packets() {
-        if stream.index() != video_index {
-            continue;
-        }
-
-        let Some(data) = packet.data() else {
-            continue;
-        };
-
-        packet_count += 1;
-        byte_count += data.len() as u64;
-
-        if packet_count % 25 == 0 {
-            println!(
-                "packets={} total={} KB pts={:?} dts={:?} key={}",
-                packet_count,
-                byte_count / 1024,
-                packet.pts(),
-                packet.dts(),
-                packet.is_key()
-            );
-        }
+    let mut args = std::env::args().skip(1);
+    let first = args.next().unwrap_or_default();
+    if first == "--inspect" {
+        let url = args
+            .next()
+            .context("usage: ferrumview --inspect <hls-url>")?;
+        return tokio::task::spawn_blocking(move || inspect::run(&url)).await?;
     }
 
+    let app = Router::new()
+        .route(
+            "/",
+            get(|| async { Html(include_str!("../static/index.html")) }),
+        )
+        .route("/api/config", get(config))
+        .with_state(Config { stream_url: first });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+        .await
+        .context("failed to bind http://127.0.0.1:3000")?;
+    tracing::info!("Open http://127.0.0.1:3000 in your browser");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
     Ok(())
+}
+
+async fn config(
+    State(config): State<Config>,
+) -> ([(axum::http::HeaderName, &'static str); 1], Json<Config>) {
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Json(config),
+    )
 }
