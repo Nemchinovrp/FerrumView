@@ -76,11 +76,35 @@
     let hls = null;
     let revision = 0;
     let failed = false;
+    let retryTimer = null;
+    let watchdog = null;
+    let attempts = 0;
+    let active = false;
+    let starting = false;
+    let lastProgress = 0;
+    let lastTime = 0;
+    let healthySince = null;
+    function clearTimers() {
+      clearTimeout(retryTimer);
+      clearInterval(watchdog);
+      retryTimer = null;
+      watchdog = null;
+    }
+    function scheduleRetry(reason) {
+      if (!active || retryTimer !== null) return;
+      stop();
+      failed = true;
+      const delay = Math.min(3000 * 2 ** Math.min(attempts++, 4), 30000);
+      message(`${reason} Повтор через ${delay / 1000} с.`, true);
+      retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+    }
     function message(text, error = false) {
       status.textContent = text;
       status.dataset.error = String(error);
     }
     function stop() {
+      active = false;
+      clearTimers();
       revision++;
       if (hls) { hls.destroy(); hls = null; }
       video.removeAttribute('src');
@@ -99,11 +123,40 @@
         message('Некорректная HTTP(S) ссылка.', true);
         return;
       }
+      active = true;
+      starting = true;
+      healthySince = null;
+      lastProgress = performance.now();
+      lastTime = video.currentTime;
+      watchdog = setInterval(() => {
+        if (!active) return;
+        const now = performance.now();
+        if (!starting && video.paused && !video.ended) {
+          lastProgress = now;
+          healthySince = null;
+          return;
+        }
+        if (video.currentTime !== lastTime && !video.paused) {
+          lastTime = video.currentTime;
+          lastProgress = now;
+          healthySince ??= now;
+          if (now - healthySince >= 30000) attempts = 0;
+        } else {
+          healthySince = null;
+          if (now - lastProgress >= 15000) scheduleRetry('Видео не поступает.');
+        }
+      }, 1000);
       message('Подключение…');
       const current = revision;
       function play() {
-        video.play().catch(() => {
-          if (current === revision && !failed) message('Нажмите ▶ для просмотра.');
+        video.play().catch(error => {
+          if (current !== revision || failed) return;
+          if (error.name === 'NotAllowedError') {
+            starting = false;
+            message('Нажмите ▶ для просмотра.');
+          } else if (error.name !== 'AbortError') {
+            scheduleRetry('Не удалось запустить видео.');
+          }
         });
       }
       if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -115,26 +168,36 @@
         instance.on(Hls.Events.MANIFEST_PARSED, play);
         instance.on(Hls.Events.ERROR, (_, data) => {
           if (current !== revision || !data.fatal) return;
-          failed = true;
-          message('Поток недоступен. Проверьте ссылку и переподключитесь.', true);
-          instance.destroy();
-          hls = null;
+          scheduleRetry('Ошибка потока.');
         });
         instance.loadSource(url.href);
         instance.attachMedia(video);
       } else {
+        stop();
         failed = true;
         message('HLS-плеер недоступен. Проверьте браузер и интернет.', true);
       }
     }
-    video.addEventListener('playing', () => { failed = false; message('● Прямой эфир'); });
-    video.addEventListener('waiting', () => { if (!failed) message('Буферизация…'); });
-    video.addEventListener('pause', () => { if (!failed) message('Пауза'); });
-    video.addEventListener('error', () => {
-      failed = true;
-      message('Ошибка видео. Попробуйте переподключиться.', true);
+    video.addEventListener('playing', () => {
+      if (!active) return;
+      starting = false;
+      failed = false;
+      lastProgress = performance.now();
+      message('● Прямой эфир');
     });
-    reconnect.addEventListener('click', connect);
+    video.addEventListener('play', () => {
+      if (active) { lastProgress = performance.now(); starting = true; }
+    });
+    video.addEventListener('waiting', () => { if (active && !failed) message('Буферизация…'); });
+    video.addEventListener('pause', () => {
+      if (active && !failed && !video.error && video.readyState >= 2) {
+        starting = false;
+        message('Пауза');
+      }
+    });
+    video.addEventListener('error', () => { if (video.error) scheduleRetry('Ошибка видео.'); });
+    video.addEventListener('ended', () => scheduleRetry('Поток завершился.'));
+    reconnect.addEventListener('click', () => { attempts = 0; connect(); });
     players.push({ stop, connect });
     connect();
   }
