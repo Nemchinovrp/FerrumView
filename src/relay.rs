@@ -102,6 +102,13 @@ impl Relays {
         if !is_dsi(url) {
             return url.to_owned();
         }
+        self.buffered_url(url).await
+    }
+    pub async fn buffered_url(&self, url: &str) -> String {
+        // Account cameras already have a local route; never relay ourselves.
+        if url.starts_with("/relay/") {
+            return url.to_owned();
+        }
         let url = url.split('#').next().unwrap_or(url).to_owned();
         self.register(url.clone(), Source::Url(url)).await
     }
@@ -154,7 +161,9 @@ async fn worker(
         state.lock().await.message = "Получение адреса и подключение…".into();
         let outcome: Result<()> = async {
             // Only this worker owns this generated directory.
-            if tokio::fs::try_exists(&directory).await? { tokio::fs::remove_dir_all(&directory).await?; }
+            if tokio::fs::try_exists(&directory).await? {
+                tokio::fs::remove_dir_all(&directory).await?;
+            }
             tokio::fs::create_dir(&directory).await?;
             let url = match &source {
                 Source::Url(url) => url.clone(),
@@ -163,12 +172,39 @@ async fn worker(
                     crate::dsi::fresh_url(camera_id).await?
                 }
             };
-            let mut child = Command::new("ffmpeg")
-                .env("OPENSSL_CONF", root.join("openssl.cnf"))
-                .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-rw_timeout", "15000000", "-tls_verify", "1", "-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36", "-headers", "Origin: https://video.dsi.ru\r\nReferer: https://video.dsi.ru/\r\n", "-i"])
-                .arg(&url)
-                .args(["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "copy", "-c:a", "aac", "-f", "hls", "-hls_time", "2", "-hls_list_size", "6", "-hls_delete_threshold", "2", "-hls_start_number_source", "epoch", "-hls_flags", "delete_segments+temp_file+omit_endlist", "-hls_segment_filename", "segment_%d.ts", "index.m3u8"])
-                .current_dir(&directory).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).kill_on_drop(true).spawn().context("Не удалось запустить FFmpeg")?;
+            let mut child = input_command(&url, &root)
+                .args([
+                    "-map",
+                    "0:v:0",
+                    "-map",
+                    "0:a:0?",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                    "-f",
+                    "hls",
+                    "-hls_time",
+                    "2",
+                    "-hls_list_size",
+                    "12",
+                    "-hls_delete_threshold",
+                    "2",
+                    "-hls_start_number_source",
+                    "epoch",
+                    "-hls_flags",
+                    "delete_segments+temp_file+omit_endlist",
+                    "-hls_segment_filename",
+                    "segment_%d.ts",
+                    "index.m3u8",
+                ])
+                .current_dir(&directory)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .context("Не удалось запустить FFmpeg")?;
             let started = Instant::now();
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;
@@ -176,16 +212,28 @@ async fn worker(
                     let _ = child.kill().await;
                     return Ok(());
                 }
-                if child.try_wait()?.is_some() { anyhow::bail!("DSI прервал поток; получаем свежую ссылку"); }
+                if child.try_wait()?.is_some() {
+                    anyhow::bail!("Источник прервал поток; переподключаемся");
+                }
                 let metadata = tokio::fs::metadata(directory.join("index.m3u8")).await.ok();
-                let age = metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).unwrap_or_else(|| started.elapsed());
-                if age > Duration::from_secs(45) { let _ = child.kill().await; anyhow::bail!("Видео не поступает; обновляем адрес камеры"); }
+                let age = metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.elapsed().ok())
+                    .unwrap_or_else(|| started.elapsed());
+                if age > Duration::from_secs(45) {
+                    let _ = child.kill().await;
+                    anyhow::bail!("Видео не поступает; обновляем адрес камеры");
+                }
                 if metadata.is_some() {
                     state.lock().await.message = "Поток доступен".into();
-                    if started.elapsed() > Duration::from_secs(30) { failures = 0; }
+                    if started.elapsed() > Duration::from_secs(30) {
+                        failures = 0;
+                    }
                 }
             }
-        }.await;
+        }
+        .await;
         match outcome {
             Ok(()) => return,
             Err(error) => {
@@ -200,6 +248,26 @@ async fn worker(
             }
         }
     }
+}
+
+fn input_command(url: &str, root: &std::path::Path) -> Command {
+    let mut command = Command::new("ffmpeg");
+    command.args([
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-rw_timeout",
+        "15000000",
+        "-tls_verify",
+        "1",
+    ]);
+    if is_dsi(url) {
+        command.env("OPENSSL_CONF", root.join("openssl.cnf"))
+            .args(["-user_agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36", "-headers", "Origin: https://video.dsi.ru\r\nReferer: https://video.dsi.ru/\r\n"]);
+    }
+    command.arg("-i").arg(url);
+    command
 }
 
 fn valid_file(name: &str) -> bool {
@@ -295,5 +363,35 @@ mod tests {
         assert_ne!(one, relays.account_url("18838".into()).await);
         assert!(!one.contains("18830"));
         relays.shutdown().await;
+    }
+    #[tokio::test]
+    async fn ordinary_cameras_are_buffered_without_relaying_local_routes() {
+        let relays = Relays::new().await.unwrap();
+        let url = "https://example.com/live.m3u8?token=test";
+        let local = relays.buffered_url(url).await;
+        assert!(local.starts_with("/relay/"));
+        assert_eq!(
+            local,
+            relays.buffered_url(&format!("{url}#video=copy")).await
+        );
+        assert_eq!(local, relays.buffered_url(&local).await);
+        assert_eq!(url, relays.local_url(url).await);
+        relays.shutdown().await;
+    }
+    #[test]
+    fn ordinary_cameras_do_not_receive_dsi_headers_or_tls_config() {
+        for (url, dsi) in [
+            ("https://vs6.newbwc.ru/live.m3u8", false),
+            ("https://video9.dsi.ru/live.m3u8", true),
+        ] {
+            let command = input_command(url, std::path::Path::new("/tmp/test"));
+            let command = command.as_std();
+            assert_eq!(command.get_args().any(|arg| arg == "-headers"), dsi);
+            assert_eq!(
+                command.get_envs().any(|(key, _)| key == "OPENSSL_CONF"),
+                dsi
+            );
+            assert!(command.get_args().any(|arg| arg == "-tls_verify"));
+        }
     }
 }

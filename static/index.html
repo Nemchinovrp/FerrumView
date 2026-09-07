@@ -57,7 +57,8 @@
     title.textContent = camera.name;
     const video = document.createElement('video');
     video.controls = false;
-    video.autoplay = true;
+    // Playback is started explicitly after buffering (or immediately for native HLS).
+    video.autoplay = false;
     video.muted = true;
     video.playsInline = true;
     video.setAttribute('aria-label', camera.name);
@@ -224,7 +225,26 @@
           lowLatencyMode: false,
         });
         hls = instance;
-        instance.on(Hls.Events.MANIFEST_PARSED, play);
+        // Build a contiguous reserve before starting, rather than playing the first fragment dry.
+        let playbackRequested = false;
+        instance.on(Hls.Events.BUFFER_APPENDED, () => {
+          if (current !== revision || playbackRequested) return;
+          for (let i = 0; i < video.buffered.length; i++) {
+            const startTime = Math.max(video.currentTime, video.buffered.start(i));
+            if (video.buffered.end(i) - startTime >= 6) {
+              playbackRequested = true;
+              play();
+              return;
+            }
+          }
+          message('Накопление буфера…');
+        });
+        // A short finite clip may end before reaching the live startup reserve.
+        instance.on(Hls.Events.BUFFER_EOS, () => {
+          if (current !== revision || playbackRequested || !video.buffered.length) return;
+          playbackRequested = true;
+          play();
+        });
         instance.on(Hls.Events.ERROR, (_, data) => {
           if (current !== revision || !data.fatal) return;
           console.error('Camera playback failed', camera.name, data.details, data.response?.code);

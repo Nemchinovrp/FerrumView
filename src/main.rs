@@ -147,7 +147,7 @@ async fn config(
             Err(_) => anyhow::bail!("Не удалось прочитать dsi-cameras.txt"),
         }
         for camera in &mut cameras {
-            camera.url = config.relays.local_url(&camera.url).await;
+            camera.url = config.relays.buffered_url(&camera.url).await;
         }
         let stream_url = config.relays.local_url(&config.stream_url).await;
         Ok((
