@@ -113,3 +113,5 @@ DSI-подключения отправляют User-Agent из рабочего
 
 Посмотреть какой pid у процесса lsof -nP -iTCP:6523 -sTCP:LISTEN
 И остановить его kill -INT 44824
+
+Запустить проект  cargo +1.92.0 run --offline
