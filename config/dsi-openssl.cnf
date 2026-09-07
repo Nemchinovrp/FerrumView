@@ -1,0 +1,13 @@
+
+# Used only by FFmpeg processes relaying dsi.ru cameras.
+openssl_conf = openssl_init
+
+[openssl_init]
+ssl_conf = ssl_section
+
+[ssl_section]
+system_default = system_default_section
+
+[system_default_section]
+MinProtocol = TLSv1.2
+CipherString = DEFAULT:@SECLEVEL=1
