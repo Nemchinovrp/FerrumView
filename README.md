@@ -163,3 +163,5 @@ DSI-подключения отправляют User-Agent из рабочего
 И остановить его kill -INT 44824
 
 Запустить проект  cargo +1.92.0 run --offline
+
+docker compose up -d --force-recreate
