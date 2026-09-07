@@ -96,6 +96,13 @@
       failed = true;
       const delay = Math.min(3000 * 2 ** Math.min(attempts++, 4), 30000);
       message(`${reason} Повтор через ${delay / 1000} с.`, true);
+      if (camera.url.startsWith('/relay/')) {
+        const stoppedRevision = revision;
+        fetch(camera.url.replace(/index\.m3u8$/, 'status'), { cache: 'no-store' })
+          .then(response => response.ok ? response.json() : null)
+          .then(data => { if (data && revision === stoppedRevision && failed) message(data.message, true); })
+          .catch(() => {});
+      }
       retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
     }
     function message(text, error = false) {

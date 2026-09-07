@@ -1,3 +1,4 @@
+mod dsi;
 mod inspect;
 mod relay;
 
@@ -31,6 +32,7 @@ async fn main() -> Result<()> {
         )
         .route("/api/config", get(config))
         .route("/relay/{id}/{name}", get(relay::serve))
+        .route("/relay/{id}/status", get(relay::status))
         .with_state(Config {
             stream_url: first,
             relays: relays.clone(),
@@ -126,6 +128,22 @@ async fn config(
             }
         };
         let mut cameras = parse_cameras(&contents)?;
+        match tokio::fs::read_to_string("dsi-cameras.txt").await {
+            Ok(contents) => {
+                let accounts = dsi::parse_cameras(&contents)?;
+                if !accounts.is_empty() {
+                    cameras.retain(|camera| !relay::is_dsi(&camera.url));
+                    for (name, id) in accounts {
+                        cameras.push(Camera {
+                            name,
+                            url: config.relays.account_url(id).await,
+                        });
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => anyhow::bail!("Не удалось прочитать dsi-cameras.txt"),
+        }
         for camera in &mut cameras {
             camera.url = config.relays.local_url(&camera.url).await;
         }
