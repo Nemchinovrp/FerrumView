@@ -37,9 +37,11 @@ async fn main() -> Result<()> {
             stream_url: first,
             relays: relays.clone(),
         });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:6523")
+    let bind_addr =
+        std::env::var("FERRUMVIEW_BIND").unwrap_or_else(|_| "127.0.0.1:6523".to_owned());
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .context("failed to bind http://127.0.0.1:6523")?;
+        .with_context(|| format!("failed to bind {bind_addr}"))?;
     tracing::info!("Open http://127.0.0.1:6523 in your browser");
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {

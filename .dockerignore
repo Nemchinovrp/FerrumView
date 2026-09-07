@@ -1,0 +1,11 @@
+**
+!Cargo.toml
+!Cargo.lock
+!src/
+!src/**
+!static/
+!static/**
+!config/
+!config/dsi-openssl.cnf
+!Dockerfile
+!.dockerignore

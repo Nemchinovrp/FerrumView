@@ -1,0 +1,28 @@
+services:
+  ferrumview:
+    build: .
+    ports:
+      - "127.0.0.1:6523:6523"
+    restart: unless-stopped
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 20s
+    volumes:
+      - type: bind
+        source: ./streams.txt
+        target: /app/streams.txt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./dsi-cameras.txt
+        target: /app/dsi-cameras.txt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.dsi.env
+        target: /app/.dsi.env
+        read_only: true
+        bind:
+          create_host_path: false
