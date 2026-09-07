@@ -115,7 +115,7 @@
       failed = false;
       let url;
       try {
-        url = new URL(camera.url);
+        url = new URL(camera.url, window.location.href);
         if (!['https:', 'http:'].includes(url.protocol)) throw new Error();
         url.hash = '';
       } catch {
@@ -159,19 +159,20 @@
           }
         });
       }
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url.href;
-        play();
-      } else if (window.Hls && Hls.isSupported()) {
+      if (window.Hls && Hls.isSupported()) {
         const instance = new Hls();
         hls = instance;
         instance.on(Hls.Events.MANIFEST_PARSED, play);
         instance.on(Hls.Events.ERROR, (_, data) => {
           if (current !== revision || !data.fatal) return;
-          scheduleRetry('Ошибка потока.');
+          console.error('Camera playback failed', camera.name, data.details, data.response?.code);
+          scheduleRetry(`Ошибка потока (${data.details}).`);
         });
         instance.loadSource(url.href);
         instance.attachMedia(video);
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = url.href;
+        play();
       } else {
         stop();
         failed = true;
