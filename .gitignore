@@ -21,3 +21,5 @@ Thumbs.db
 *.swp
 *~
 streams.txt
+.dsi.env
+.dsi.env.*
