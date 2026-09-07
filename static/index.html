@@ -122,9 +122,12 @@
       if (!active || !video.seekable.length) return;
       const edge = video.seekable.end(video.seekable.length - 1);
       const beginning = video.seekable.start(video.seekable.length - 1);
-      const target = hls?.liveSyncPosition ?? Math.max(beginning, edge - 3);
+      const target = hls?.liveSyncPosition ?? Math.max(beginning, edge - 10);
+      // Never jump into data that has not arrived yet.
+      const buffered = Array.from({ length: video.buffered.length }, (_, i) => i)
+        .some(i => target >= video.buffered.start(i) && target + 1 < video.buffered.end(i));
       if (Number.isFinite(target) && target >= beginning && target <= edge &&
-          (force || target - video.currentTime > 6)) video.currentTime = target;
+          buffered && (force || target - video.currentTime > 30)) video.currentTime = target;
     }
     function clearTimers() {
       clearTimeout(retryTimer);
@@ -181,7 +184,8 @@
       watchdog = setInterval(() => {
         if (!active) return;
         const now = performance.now();
-        if (!video.paused) syncToLive();
+        // hls.js manages its own live position and recovery. Only native HLS needs this fallback.
+        if (!hls && !video.paused) syncToLive();
         if (!starting && video.paused && !video.ended) {
           lastProgress = now;
           healthySince = null;
@@ -194,7 +198,7 @@
           if (now - healthySince >= 30000) attempts = 0;
         } else {
           healthySince = null;
-          if (now - lastProgress >= 15000) scheduleRetry('Видео не поступает.');
+          if (now - lastProgress >= (starting ? 45000 : 30000)) scheduleRetry('Видео не поступает.');
         }
       }, 1000);
       message('Подключение…');
@@ -213,10 +217,11 @@
       }
       if (window.Hls && Hls.isSupported()) {
         const instance = new Hls({
-          liveSyncDurationCount: 2,
-          liveMaxLatencyDurationCount: 4,
-          maxLiveSyncPlaybackRate: 1.1,
-          backBufferLength: 0,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 8,
+          maxLiveSyncPlaybackRate: 1,
+          backBufferLength: 15,
+          lowLatencyMode: false,
         });
         hls = instance;
         instance.on(Hls.Events.MANIFEST_PARSED, play);
@@ -259,7 +264,7 @@
     video.addEventListener('ended', () => scheduleRetry('Поток завершился.'));
     reconnect.addEventListener('click', () => { attempts = 0; connect(); });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && active) syncToLive(true);
+      if (!document.hidden && active) syncToLive();
     });
     players.push({ stop, connect });
     connect();
