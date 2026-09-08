@@ -71,16 +71,6 @@
     reconnect.type = 'button';
     reconnect.textContent = 'Переподключить';
     reconnect.setAttribute('aria-label', `Переподключить: ${camera.name}`);
-    const sound = document.createElement('button');
-    sound.type = 'button';
-    sound.textContent = 'Включить звук';
-    sound.setAttribute('aria-pressed', 'false');
-    sound.setAttribute('aria-label', `Звук: ${camera.name}`);
-    sound.addEventListener('click', () => {
-      video.muted = !video.muted;
-      sound.textContent = video.muted ? 'Включить звук' : 'Выключить звук';
-      sound.setAttribute('aria-pressed', String(!video.muted));
-    });
     const fullscreen = document.createElement('button');
     fullscreen.type = 'button';
     fullscreen.textContent = 'Полный экран';
@@ -103,7 +93,7 @@
       syncToLive(true);
       video.play().then(() => { start.hidden = true; }).catch(() => message('Не удалось запустить видео. Нажмите «Переподключить».', true));
     });
-    footer.append(status, start, sound, fullscreen, reconnect);
+    footer.append(status, start, fullscreen, reconnect);
     card.append(title, video, footer);
     grid.append(card);
     document.getElementById('camera-count').textContent = `(${grid.children.length})`;

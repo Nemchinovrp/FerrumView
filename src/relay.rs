@@ -176,12 +176,9 @@ async fn worker(
                 .args([
                     "-map",
                     "0:v:0",
-                    "-map",
-                    "0:a:0?",
                     "-c:v",
                     "copy",
-                    "-c:a",
-                    "aac",
+                    "-an",
                     "-f",
                     "hls",
                     "-hls_time",
